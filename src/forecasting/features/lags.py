@@ -1,4 +1,4 @@
-"""Within-series target lag feature generation."""
+"""Calendar-date target lag feature generation."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ ORDER_COLUMNS = [*SERIES_COLUMNS, "date"]
 
 
 def add_lag_features(data: pd.DataFrame, target_column: str = "sales") -> pd.DataFrame:
-    """Add observation-based target lags independently for each series.
+    """Add exact calendar-date target lags independently for each series.
 
-    Rows are sorted by store, family, and date before shifting. A lag counts
-    prior observations in that series; absent calendar dates are not inserted
-    or imputed.
+    A lag looks up the target exactly ``period`` calendar days before each
+    row's date. If that date is absent, the lag is NaN. No rows or values are
+    inserted or imputed.
     """
     required = {*ORDER_COLUMNS, target_column}
     missing = sorted(required - set(data.columns))
@@ -24,7 +24,14 @@ def add_lag_features(data: pd.DataFrame, target_column: str = "sales") -> pd.Dat
     result = data.copy()
     result["date"] = pd.to_datetime(result["date"], errors="raise")
     result = result.sort_values(ORDER_COLUMNS, kind="stable").reset_index(drop=True)
-    grouped_target = result.groupby(SERIES_COLUMNS, sort=False)[target_column]
-    for period in LAG_PERIODS:
-        result[f"lag_{period}"] = grouped_target.shift(period)
+    if result["date"].isna().any():
+        raise ValueError("data.date must not contain missing values")
+    if result.duplicated(subset=[*SERIES_COLUMNS, "date"]).any():
+        raise ValueError("data must be unique on date + store_nbr + family")
+
+    for _, group in result.groupby(SERIES_COLUMNS, sort=False):
+        sales_by_date = group.set_index("date")[target_column]
+        for period in LAG_PERIODS:
+            source_dates = group["date"] - pd.to_timedelta(period, unit="D")
+            result.loc[group.index, f"lag_{period}"] = source_dates.map(sales_by_date)
     return result

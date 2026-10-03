@@ -40,6 +40,8 @@ def test_pipeline_does_not_fill_or_synthesize_christmas_closure() -> None:
     assert result["date"].tolist() == list(data["date"])
     assert pd.Timestamp("2016-12-25") not in set(result["date"])
     assert result["sales"].tolist() == [12.0, 14.0]
+    dec26 = result.loc[result["date"].eq(pd.Timestamp("2016-12-26"))].iloc[0]
+    assert pd.isna(dec26["lag_1"])
 
 
 def test_pipeline_preserves_explicit_missing_christmas_target() -> None:

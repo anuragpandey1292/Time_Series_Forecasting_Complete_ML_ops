@@ -1,4 +1,4 @@
-"""Leakage-safe within-series rolling target statistics."""
+"""Leakage-safe within-series calendar-window target statistics."""
 
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ ORDER_COLUMNS = [*SERIES_COLUMNS, "date"]
 def add_rolling_features(
     data: pd.DataFrame, target_column: str = "sales"
 ) -> pd.DataFrame:
-    """Add prior-observation rolling means and sample standard deviations.
+    """Add statistics over the preceding calendar days, excluding today.
 
-    The target is shifted by one observation within each store-family series
-    before each full-window statistic is calculated, excluding the current
-    target and preserving missing target values.
+    For a window of ``N`` days at date ``t``, use observed rows in
+    ``[t - N days, t)``. Missing dates are not synthesized. Means require at
+    least one non-null target in the window; sample standard deviations
+    require at least two. Missing targets are never imputed.
     """
     required = {*ORDER_COLUMNS, target_column}
     missing = sorted(required - set(data.columns))
@@ -26,19 +27,23 @@ def add_rolling_features(
     result = data.copy()
     result["date"] = pd.to_datetime(result["date"], errors="raise")
     result = result.sort_values(ORDER_COLUMNS, kind="stable").reset_index(drop=True)
+    if result["date"].isna().any():
+        raise ValueError("data.date must not contain missing values")
+    if result.duplicated(subset=[*SERIES_COLUMNS, "date"]).any():
+        raise ValueError("data must be unique on date + store_nbr + family")
+
     for window in ROLLING_WINDOWS:
-        result[f"rolling_mean_{window}"] = result.groupby(SERIES_COLUMNS, sort=False)[
-            target_column
-        ].transform(
-            lambda values, window=window: (
-                values.shift(1).rolling(window=window, min_periods=window).mean()
+        mean_column = f"rolling_mean_{window}"
+        std_column = f"rolling_std_{window}"
+        result[mean_column] = float("nan")
+        result[std_column] = float("nan")
+        for _, group in result.groupby(SERIES_COLUMNS, sort=False):
+            values = group.set_index("date")[target_column]
+            rolling = values.rolling(f"{window}D", closed="left", min_periods=1)
+            result.loc[group.index, mean_column] = rolling.mean().to_numpy()
+            result.loc[group.index, std_column] = (
+                values.rolling(f"{window}D", closed="left", min_periods=2)
+                .std()
+                .to_numpy()
             )
-        )
-        result[f"rolling_std_{window}"] = result.groupby(SERIES_COLUMNS, sort=False)[
-            target_column
-        ].transform(
-            lambda values, window=window: (
-                values.shift(1).rolling(window=window, min_periods=window).std()
-            )
-        )
     return result

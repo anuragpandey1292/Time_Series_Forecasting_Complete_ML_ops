@@ -3,7 +3,7 @@ import pandas as pd
 from forecasting.features.promotions import add_promotion_features
 
 
-def test_promotion_features_use_current_and_prior_observations() -> None:
+def test_promotion_features_use_calendar_dates_and_prior_windows() -> None:
     data = pd.DataFrame(
         {
             "date": pd.date_range("2020-01-01", periods=15),
@@ -20,6 +20,23 @@ def test_promotion_features_use_current_and_prior_observations() -> None:
     assert row["promotion_lag_1"] == 14
     assert row["promotion_rolling_7"] == sum(range(8, 15))
     assert row["promotion_rolling_14"] == sum(range(1, 15))
+
+
+def test_promotion_features_respect_missing_calendar_date() -> None:
+    dates = pd.to_datetime(["2020-01-01", "2020-01-03", "2020-01-10"])
+    data = pd.DataFrame(
+        {
+            "date": dates,
+            "store_nbr": 1,
+            "family": "GROCERY I",
+            "onpromotion": [100, 3, 10],
+        }
+    )
+
+    result = add_promotion_features(data)
+    jan10 = result.loc[result["date"].eq(pd.Timestamp("2020-01-10"))].iloc[0]
+
+    assert jan10["promotion_rolling_7"] == 3
 
 
 def test_promotion_features_are_series_specific_and_preserve_input() -> None:

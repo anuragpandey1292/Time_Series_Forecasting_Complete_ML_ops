@@ -3,20 +3,43 @@ import pandas as pd
 from forecasting.features.lags import add_lag_features
 
 
-def test_lag_one_and_seven_within_one_series() -> None:
+def test_calendar_lags_on_uninterrupted_daily_series() -> None:
     data = pd.DataFrame(
         {
-            "date": pd.date_range("2020-01-01", periods=8),
+            "date": pd.date_range("2020-01-01", periods=15),
             "store_nbr": 1,
             "family": "GROCERY I",
-            "sales": range(1, 9),
+            "sales": range(1, 16),
         }
     )
 
     result = add_lag_features(data).set_index("date")
 
-    assert result.loc[pd.Timestamp("2020-01-08"), "lag_1"] == 7
-    assert result.loc[pd.Timestamp("2020-01-08"), "lag_7"] == 1
+    target_date = pd.Timestamp("2020-01-15")
+    assert result.loc[target_date, "lag_1"] == 14
+    assert result.loc[target_date, "lag_7"] == 8
+    assert result.loc[target_date, "lag_14"] == 1
+
+
+def test_navidad_gap_uses_exact_calendar_date_lags() -> None:
+    dates = pd.date_range("2016-12-19", "2016-12-24").append(
+        pd.DatetimeIndex(["2016-12-26"])
+    )
+    data = pd.DataFrame(
+        {
+            "date": dates,
+            "store_nbr": 44,
+            "family": "GROCERY I",
+            "sales": range(1, len(dates) + 1),
+        }
+    )
+
+    result = add_lag_features(data).set_index("date")
+    boxing_day = pd.Timestamp("2016-12-26")
+
+    assert pd.Timestamp("2016-12-25") not in result.index
+    assert pd.isna(result.loc[boxing_day, "lag_1"])
+    assert result.loc[boxing_day, "lag_7"] == 1
 
 
 def test_lags_do_not_cross_store_family_boundaries() -> None:
