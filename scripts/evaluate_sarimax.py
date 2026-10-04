@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from importlib import import_module
 from pathlib import Path
 
@@ -20,6 +21,7 @@ backtesting = import_module("forecasting.backtesting")
 data_loader = import_module("forecasting.data.loader")
 metrics = import_module("forecasting.evaluation")
 models = import_module("forecasting.models")
+tracking = import_module("forecasting.tracking")
 
 SERIES_CONFIG = [
     (44, "GROCERY I"),
@@ -211,6 +213,7 @@ def main() -> None:
         )
 
     rows = []
+    started = time.perf_counter()
     for fold in folds:
         validation = prepare_validation(fold)
         for store_nbr, family in SERIES_CONFIG:
@@ -225,7 +228,29 @@ def main() -> None:
                     holidays,
                 )
             )
-    report_results(pd.DataFrame(rows))
+    results = pd.DataFrame(rows)
+    report_results(results)
+    outcome = tracking.log_evaluation_run(
+        model_name="SARIMAX",
+        model=None,
+        model_parameters={
+            "order": (1, 1, 1),
+            "seasonal_order": (1, 0, 1, 7),
+            "optimizer": "powell",
+            "maxiter": 200,
+            "exogenous_features": "onpromotion,oil_price,holiday_indicator,payday",
+        },
+        results=results,
+        forecast_horizon=FORECAST_HORIZON,
+        number_of_series=len(SERIES_CONFIG),
+        number_of_folds=len(FORECAST_ORIGINS),
+        forecast_origins=FORECAST_ORIGINS.strftime("%Y-%m-%d").tolist(),
+        runtime_seconds=time.perf_counter() - started,
+        project_root=PROJECT_ROOT,
+        tags={"model_family": "classical"},
+        run_name="SARIMAX-rolling-origin",
+    )
+    print(f"MLflow SARIMAX: {outcome.status} {outcome.run_id or outcome.message}")
 
 
 if __name__ == "__main__":

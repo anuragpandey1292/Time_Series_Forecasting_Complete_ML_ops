@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from importlib import import_module
 from pathlib import Path
 
@@ -15,6 +16,7 @@ backtesting = import_module("forecasting.backtesting")
 data_loader = import_module("forecasting.data.loader")
 metrics = import_module("forecasting.evaluation")
 models = import_module("forecasting.models")
+tracking = import_module("forecasting.tracking")
 
 SERIES_CONFIG = [
     (44, "GROCERY I"),
@@ -194,7 +196,24 @@ def main() -> None:
             f"Expected {len(FORECAST_ORIGINS)} complete folds, generated {len(folds)}"
         )
 
-    report_results(evaluate_folds(folds))
+    started = time.perf_counter()
+    results = evaluate_folds(folds)
+    report_results(results)
+    outcome = tracking.log_evaluation_run(
+        model_name="SARIMA",
+        model=None,
+        model_parameters={"order": (1, 1, 1), "seasonal_order": (1, 0, 1, 7)},
+        results=results,
+        forecast_horizon=FORECAST_HORIZON,
+        number_of_series=len(SERIES_CONFIG),
+        number_of_folds=len(FORECAST_ORIGINS),
+        forecast_origins=FORECAST_ORIGINS.strftime("%Y-%m-%d").tolist(),
+        runtime_seconds=time.perf_counter() - started,
+        project_root=PROJECT_ROOT,
+        tags={"model_family": "classical"},
+        run_name="SARIMA-rolling-origin",
+    )
+    print(f"MLflow SARIMA: {outcome.status} {outcome.run_id or outcome.message}")
 
 
 if __name__ == "__main__":

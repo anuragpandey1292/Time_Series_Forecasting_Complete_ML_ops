@@ -15,6 +15,7 @@ dependencies = [
     "statsmodels",
     "lightgbm>=4.6,<4.7",
     "catboost",
+    "mlflow",
 ]
 
 [project.optional-dependencies]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from importlib import import_module
@@ -19,6 +20,7 @@ metrics = import_module("forecasting.evaluation")
 feature_known = import_module("forecasting.features.known")
 models = import_module("forecasting.models")
 target_imputation = import_module("forecasting.data.imputation")
+tracking = import_module("forecasting.tracking")
 
 SERIES_CONFIG = [
     (44, "GROCERY I"),
@@ -126,6 +128,7 @@ def evaluate_fold(
     stores: pd.DataFrame,
     oil_prices: pd.Series,
     holidays: pd.DataFrame,
+    fitted_models: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Fit each global model once and score the five selected series."""
     selected_mask = validation.set_index(SERIES_COLUMNS).index.isin(SERIES_CONFIG)
@@ -141,6 +144,8 @@ def evaluate_fold(
 
     for model_name, model_factory in MODEL_FACTORIES.items():
         model = model_factory()
+        if fitted_models is not None:
+            fitted_models[model_name] = model
         fit_started = time.perf_counter()
         try:
             model.fit(training_features)
@@ -304,6 +309,7 @@ def main() -> None:
     holidays = data_loader.load_holidays_events().copy()
     holidays["date"] = pd.to_datetime(holidays["date"], errors="raise")
     results: list[dict[str, object]] = []
+    fitted_models: dict[str, object] = {}
     for fold in folds:
         print(
             f"Preparing fold with forecast origin {fold.forecast_origin.date()}...",
@@ -324,10 +330,38 @@ def main() -> None:
                 stores,
                 oil_prices,
                 holidays,
+                fitted_models,
             )
         )
         print(f"Completed forecast origin {fold.forecast_origin.date()}.", flush=True)
-    print_comparison(pd.DataFrame(results))
+    results_frame = pd.DataFrame(results)
+    print_comparison(results_frame)
+
+    tracking_enabled = os.getenv("FORECASTING_MLFLOW_ENABLED", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    for model_name in MODEL_FACTORIES:
+        model_results = results_frame.loc[results_frame["model"].eq(model_name)]
+        outcome = tracking.log_evaluation_run(
+            model_name=model_name,
+            model=fitted_models[model_name],
+            results=model_results,
+            forecast_horizon=FORECAST_HORIZON,
+            number_of_series=len(SERIES_CONFIG),
+            number_of_folds=len(FORECAST_ORIGINS),
+            forecast_origins=FORECAST_ORIGINS.strftime("%Y-%m-%d").tolist(),
+            project_root=PROJECT_ROOT,
+            enabled=tracking_enabled,
+        )
+        if outcome.status == "logged":
+            print(f"MLflow {model_name} run: {outcome.run_id}")
+        else:
+            print(
+                f"MLflow tracking for {model_name}: {outcome.status}"
+                + (f" ({outcome.message})" if outcome.message else "")
+            )
 
 
 if __name__ == "__main__":

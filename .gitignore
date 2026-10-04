@@ -32,6 +32,8 @@ data/processed/
 # MLflow local tracking
 mlruns/
 mlartifacts/
+mlflow.db
+mlflow.db-*
 
 # Model artifacts and logs
 model_artifacts/

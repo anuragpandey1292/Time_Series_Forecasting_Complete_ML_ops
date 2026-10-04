@@ -31,6 +31,11 @@ class GlobalRecursiveRegressor:
         self._series_keys: set[tuple[object, object]] = set()
         self._forecast_origin: pd.Timestamp | None = None
 
+    @property
+    def feature_count(self) -> int:
+        """Return the number of fitted model features."""
+        return len(self._feature_columns)
+
     def fit(self, train_data: pd.DataFrame) -> None:
         """Fit one global estimator on historical rows from all series.
 

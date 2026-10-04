@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from importlib import import_module
 from pathlib import Path
 
@@ -15,6 +16,7 @@ backtesting = import_module("forecasting.backtesting")
 data_loader = import_module("forecasting.data.loader")
 metrics = import_module("forecasting.evaluation")
 models = import_module("forecasting.models")
+tracking = import_module("forecasting.tracking")
 
 SERIES_CONFIG = [
     (44, "GROCERY I"),
@@ -23,9 +25,7 @@ SERIES_CONFIG = [
     (1, "PRODUCE"),
     (45, "BEVERAGES"),
 ]
-FORECAST_ORIGINS = pd.to_datetime(
-    ["2017-06-28", "2017-07-14", "2017-07-30"]
-)
+FORECAST_ORIGINS = pd.to_datetime(["2017-06-28", "2017-07-14", "2017-07-30"])
 FORECAST_HORIZON = 16
 ARIMA_ORDER = (1, 1, 1)
 SERIES_COLUMNS = ["store_nbr", "family"]
@@ -37,9 +37,10 @@ def prepare_validation(fold: backtesting.BacktestFold) -> pd.DataFrame:
     validation = fold.validation_features.reset_index()
     validation["actual"] = fold.validation_target.to_numpy()
     counts = validation.groupby(SERIES_COLUMNS).size()
-    if set(counts.index.tolist()) != set(SERIES_CONFIG) or not counts.eq(
-        FORECAST_HORIZON
-    ).all():
+    if (
+        set(counts.index.tolist()) != set(SERIES_CONFIG)
+        or not counts.eq(FORECAST_HORIZON).all()
+    ):
         raise ValueError(
             "Each configured series must have all 16 validation observations; "
             f"observed counts: {counts.to_dict()}"
@@ -117,12 +118,11 @@ def main() -> None:
         )
 
     result_rows = []
+    started = time.perf_counter()
     for fold in folds:
         validation = prepare_validation(fold)
         for store_nbr, family in SERIES_CONFIG:
-            result_rows.append(
-                score_series(fold, validation, store_nbr, family)
-            )
+            result_rows.append(score_series(fold, validation, store_nbr, family))
 
     results = pd.DataFrame(result_rows)
     print("Per-series, per-fold ARIMA metrics")
@@ -136,6 +136,21 @@ def main() -> None:
     )
     print("\nAggregate ARIMA summary")
     print(summary.to_string(index=False, float_format=lambda value: f"{value:.4f}"))
+    outcome = tracking.log_evaluation_run(
+        model_name="ARIMA",
+        model=None,
+        model_parameters={"order": ARIMA_ORDER},
+        results=results.assign(status="success"),
+        forecast_horizon=FORECAST_HORIZON,
+        number_of_series=len(SERIES_CONFIG),
+        number_of_folds=len(FORECAST_ORIGINS),
+        forecast_origins=FORECAST_ORIGINS.strftime("%Y-%m-%d").tolist(),
+        runtime_seconds=time.perf_counter() - started,
+        project_root=PROJECT_ROOT,
+        tags={"model_family": "classical"},
+        run_name="ARIMA-rolling-origin",
+    )
+    print(f"MLflow ARIMA: {outcome.status} {outcome.run_id or outcome.message}")
 
 
 if __name__ == "__main__":

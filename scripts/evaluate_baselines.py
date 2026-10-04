@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from importlib import import_module
 from pathlib import Path
 
@@ -15,6 +16,7 @@ backtesting = import_module("forecasting.backtesting")
 data_loader = import_module("forecasting.data.loader")
 metrics = import_module("forecasting.evaluation")
 models = import_module("forecasting.models")
+tracking = import_module("forecasting.tracking")
 
 SERIES_CONFIG = [
     (44, "GROCERY I"),
@@ -98,6 +100,7 @@ def score_series_model(
         "rmsle": metrics.rmsle(scored["actual"], scored["prediction"]),
         "mae": metrics.mae(scored["actual"], scored["prediction"]),
         "rmse": metrics.rmse(scored["actual"], scored["prediction"]),
+        "status": "success",
     }
 
 
@@ -127,6 +130,7 @@ def main() -> None:
         )
 
     result_rows: list[dict[str, object]] = []
+    started = time.perf_counter()
     for fold in folds:
         validation = validate_fold_series_coverage(fold)
         for store_nbr, family in SERIES_CONFIG:
@@ -163,6 +167,29 @@ def main() -> None:
     )
     print("\nAggregate metrics by model")
     print(summary.to_string(index=False, float_format=lambda value: f"{value:.4f}"))
+    for model_name, result_name, parameters in [
+        ("Naive", "Naive", {"strategy": "latest observed value"}),
+        ("Seasonal Naive", "Seasonal Naive (7-day)", {"seasonal_lag": 7}),
+    ]:
+        outcome = tracking.log_evaluation_run(
+            model_name=model_name,
+            model=None,
+            model_parameters=parameters,
+            results=results.loc[results["model"].eq(result_name)],
+            forecast_horizon=FORECAST_HORIZON,
+            number_of_series=len(SERIES_CONFIG),
+            number_of_folds=FOLD_COUNT,
+            forecast_origins=[
+                fold.forecast_origin.strftime("%Y-%m-%d") for fold in folds
+            ],
+            runtime_seconds=time.perf_counter() - started,
+            project_root=PROJECT_ROOT,
+            tags={"model_family": "classical"},
+            run_name=f"{model_name}-rolling-origin",
+        )
+        print(
+            f"MLflow {model_name}: {outcome.status} {outcome.run_id or outcome.message}"
+        )
 
 
 if __name__ == "__main__":
