@@ -11,6 +11,11 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from forecasting.features.known import (  # noqa: E402
+    holiday_value_for_store,
+    prepare_oil_prices,
+)
+
 backtesting = import_module("forecasting.backtesting")
 data_loader = import_module("forecasting.data.loader")
 metrics = import_module("forecasting.evaluation")
@@ -28,57 +33,6 @@ FORECAST_HORIZON = 16
 SERIES_COLUMNS = ["store_nbr", "family"]
 KEY_COLUMNS = ["date", *SERIES_COLUMNS]
 MODEL_NAME = "SARIMAX(1,1,1)(1,0,1,7)"
-
-
-def prepare_oil_prices(oil: pd.DataFrame) -> pd.Series:
-    """Create a daily causal oil-price lookup without consulting sales.
-
-    The raw oil table has dates without a published quote. For SARIMAX's
-    finite-exog requirement, each gap carries forward the most recent known
-    quote. This is a forecast-time-available exogenous value, not a target fill.
-    """
-    required = {"date", "dcoilwtico"}
-    missing = sorted(required - set(oil.columns))
-    if missing:
-        raise ValueError(f"oil data is missing required columns: {missing}")
-    prices = oil.loc[:, ["date", "dcoilwtico"]].copy()
-    prices["date"] = pd.to_datetime(prices["date"], errors="raise")
-    if prices["date"].duplicated().any():
-        raise ValueError("oil data must have at most one row per date")
-    prices = prices.set_index("date")["dcoilwtico"].astype(float).sort_index()
-    full_dates = pd.date_range(prices.index.min(), prices.index.max(), freq="D")
-    return prices.reindex(full_dates).ffill()
-
-
-def holiday_value_for_store(
-    date: pd.Timestamp,
-    store: pd.Series,
-    holidays: pd.DataFrame,
-) -> int:
-    """Return a simple localized holiday/event code for one store-date.
-
-    Non-transferred Holiday, Additional, Event, Transfer, and Bridge rows are
-    coded +1. Work Day is coded -1 to distinguish a make-up working day.
-    Transferred source dates are omitted; the corresponding Transfer event
-    date remains represented. This compact encoding does not model detailed
-    per-event sales effects.
-    """
-    same_date = holidays.loc[holidays["date"].eq(date)]
-    locale_match = (
-        same_date["locale"].eq("National")
-        | (
-            same_date["locale"].eq("Regional")
-            & same_date["locale_name"].eq(store["state"])
-        )
-        | (same_date["locale"].eq("Local") & same_date["locale_name"].eq(store["city"]))
-    )
-    applicable = same_date.loc[locale_match & ~same_date["transferred"].astype(bool)]
-    types = set(applicable["type"])
-    if "Work Day" in types:
-        return -1
-    if types.intersection({"Holiday", "Additional", "Event", "Transfer", "Bridge"}):
-        return 1
-    return 0
 
 
 def build_exogenous_rows(
