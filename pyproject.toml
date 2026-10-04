@@ -12,6 +12,7 @@ dependencies = [
     "pandas",
     "numpy",
     "pyarrow",
+    "statsmodels",
 ]
 
 [project.optional-dependencies]
