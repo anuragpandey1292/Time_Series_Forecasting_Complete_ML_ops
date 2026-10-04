@@ -96,6 +96,7 @@ def log_evaluation_run(
     model_parameters: dict[str, Any] | None = None,
     tags: dict[str, str] | None = None,
     run_name: str | None = None,
+    model_artifact_logger: Any | None = None,
 ) -> TrackingOutcome:
     """Log aggregate metrics and a compact per-fold CSV to local MLflow.
 
@@ -174,6 +175,9 @@ def log_evaluation_run(
             mlflow.set_tags(run_tags)
             for key, value in metric_values.items():
                 mlflow.log_metric(key, value)
+
+            if model_artifact_logger is not None:
+                model_artifact_logger(mlflow)
 
             artifact_frame = results.loc[:, ARTIFACT_COLUMNS]
             with tempfile.TemporaryDirectory() as temporary_directory:

@@ -204,9 +204,36 @@ def model_parameters(model_name: str) -> dict[str, object]:
     }.get(model_name, {})
 
 
+def train_final_ml_model(
+    model_name: str,
+    panel: pd.DataFrame,
+    stores: pd.DataFrame,
+    oil_prices: pd.Series,
+    holidays: pd.DataFrame,
+) -> Any:
+    """Fit one deployable ML model using data available through production origin."""
+    production_origin = pd.Timestamp("2017-08-15")
+    rows = panel.loc[panel["date"].le(production_origin)].copy()
+    imputed = target_imputation.impute_training_sales_for_modeling(
+        rows.loc[:, [*KEY_COLUMNS, "sales", "onpromotion"]],
+        stores,
+        holidays,
+        train_end=production_origin,
+        complete_daily_grid=True,
+    )
+    training = feature_known.add_known_features(imputed, stores, oil_prices, holidays)
+    model = create_model(model_name)
+    model.fit(training)
+    return model
+
+
 def run_pipeline(
-    model_name: str, mlflow_enabled: bool = True
-) -> tuple[pd.DataFrame, tracking.TrackingOutcome]:
+    model_name: str,
+    mlflow_enabled: bool = True,
+    register_model: bool = False,
+    registered_model_name: str = "favorita-forecast-model",
+    model_alias: str | None = None,
+) -> tuple[pd.DataFrame, tracking.TrackingOutcome, object | None]:
     """Run the representative rolling-origin pipeline for one model."""
     started = time.perf_counter()
     raw_train = data_loader.load_train()
@@ -296,9 +323,29 @@ def run_pipeline(
                 for store_nbr, family in SERIES_CONFIG
             )
     results = pd.DataFrame(rows)
+    final_model = None
+    if model_name in {"lightgbm", "catboost"} and (register_model or mlflow_enabled):
+        final_model = train_final_ml_model(
+            model_name, panel, stores, oil_prices, holidays
+        )
+    artifact_path = "model"
+
+    def log_final_model(mlflow: Any) -> None:
+        """Log the native model flavor for the final deployable fit."""
+        if final_model is None:
+            return
+        if model_name == "lightgbm":
+            from mlflow import lightgbm
+
+            lightgbm.log_model(final_model._estimator, artifact_path=artifact_path)
+        else:
+            from mlflow import catboost
+
+            catboost.log_model(final_model._estimator, artifact_path=artifact_path)
+
     outcome = tracking.log_evaluation_run(
         model_name=model_name,
-        model=None,
+        model=final_model,
         model_parameters=model_parameters(model_name),
         results=results,
         forecast_horizon=FORECAST_HORIZON,
@@ -314,8 +361,29 @@ def run_pipeline(
             )
         },
         run_name=f"{model_name}-unified-training",
+        model_artifact_logger=log_final_model if final_model is not None else None,
     )
-    return results, outcome
+    registration = None
+    if register_model and outcome.run_id and final_model is not None:
+        successful = results.loc[results["status"].eq("success")]
+        registration = tracking.register_model(
+            run_id=outcome.run_id,
+            artifact_path=artifact_path,
+            registered_model_name=registered_model_name,
+            alias=model_alias,
+            tags={
+                "algorithm": model_name,
+                "source_run_id": outcome.run_id,
+                "mean_rmsle": successful["rmsle"].mean(),
+                "mean_mae": successful["mae"].mean(),
+                "mean_rmse": successful["rmse"].mean(),
+                "failed_fits": int((~results["status"].eq("success")).sum()),
+                "training_origin": "2017-08-15",
+                "forecast_horizon": FORECAST_HORIZON,
+                "feature_count": getattr(final_model, "feature_count", "unknown"),
+            },
+        )
+    return results, outcome, registration
 
 
 def parse_args() -> argparse.Namespace:
@@ -323,14 +391,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, choices=sorted(MODEL_REGISTRY))
     parser.add_argument("--mlflow-enabled", default="true", choices=["true", "false"])
+    parser.add_argument("--register-model", default="false", choices=["true", "false"])
+    parser.add_argument("--registered-model-name", default="favorita-forecast-model")
+    parser.add_argument("--model-alias", default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     """Run one selected model and print its concise aggregate summary."""
     args = parse_args()
-    results, outcome = run_pipeline(
-        args.model, mlflow_enabled=args.mlflow_enabled == "true"
+    results, outcome, registration = run_pipeline(
+        args.model,
+        mlflow_enabled=args.mlflow_enabled == "true",
+        register_model=args.register_model == "true",
+        registered_model_name=args.registered_model_name,
+        model_alias=args.model_alias,
     )
     successful = results.loc[results["status"].eq("success")]
     failed_count = int((~results["status"].eq("success")).sum())
@@ -346,6 +421,9 @@ def main() -> None:
     print(f"Mean MAE: {mean_mae:.4f}")
     print(f"Mean RMSE: {mean_rmse:.4f}")
     print(f"MLflow run ID: {outcome.run_id or outcome.message or outcome.status}")
+    if registration is not None:
+        print(f"Registered model: {registration.name} version {registration.version}")
+        print(f"Model alias: {args.model_alias or 'none'}")
 
 
 if __name__ == "__main__":

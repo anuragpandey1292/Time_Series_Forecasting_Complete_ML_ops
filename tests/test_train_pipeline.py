@@ -54,8 +54,14 @@ def test_cli_prints_pipeline_result_summary(
         ]
     )
     outcome = train.tracking.TrackingOutcome(status="logged", run_id="run-123")
+
+    def fake_run_pipeline(*args, **kwargs):
+        return results, outcome, None
+
     monkeypatch.setattr(
-        train, "run_pipeline", lambda model, mlflow_enabled: (results, outcome)
+        train,
+        "run_pipeline",
+        fake_run_pipeline,
     )
     monkeypatch.setattr(
         sys, "argv", ["train.py", "--model", "naive", "--mlflow-enabled", "false"]
