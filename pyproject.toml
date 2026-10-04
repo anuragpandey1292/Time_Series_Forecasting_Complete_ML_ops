@@ -16,6 +16,9 @@ dependencies = [
     "lightgbm>=4.6,<4.7",
     "catboost",
     "mlflow",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
 ]
 
 [project.optional-dependencies]
