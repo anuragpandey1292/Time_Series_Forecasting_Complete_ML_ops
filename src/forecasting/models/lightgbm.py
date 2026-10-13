@@ -1,4 +1,6 @@
-"""Global LightGBM forecasting model with recursive target features."""
+from __future__ import annotations
+
+from typing import Any
 
 import lightgbm as lgb
 import numpy as np
@@ -8,11 +10,15 @@ from forecasting.models.global_ml import GlobalRecursiveRegressor
 
 
 class LightGBMModel(GlobalRecursiveRegressor):
-    """Fixed global LightGBM regressor for store-family daily forecasts."""
+    """Global LightGBM regressor with customizable hyperparameters."""
 
-    def __init__(self) -> None:
-        """Create the initial fixed regression configuration."""
-        self._params = {
+    def __init__(
+        self,
+        params: dict[str, Any] | None = None,
+        num_boost_round: int = 100,
+    ) -> None:
+        """Create the regression configuration with optional overrides."""
+        default_params: dict[str, Any] = {
             "objective": "regression",
             "learning_rate": 0.05,
             "num_leaves": 31,
@@ -20,8 +26,21 @@ class LightGBMModel(GlobalRecursiveRegressor):
             "num_threads": 8,
             "verbosity": -1,
         }
-        self._num_boost_round = 100
+        if params is not None:
+            default_params.update(params)
+        self._params = default_params
+        self._num_boost_round = num_boost_round
         super().__init__(None, categorical_mode="lightgbm")
+
+    @property
+    def params(self) -> dict[str, Any]:
+        """Return the effective LightGBM parameters."""
+        return dict(self._params)
+
+    @property
+    def num_boost_round(self) -> int:
+        """Return the number of boosting rounds."""
+        return self._num_boost_round
 
     def _fit_estimator(self, matrix: pd.DataFrame, target: np.ndarray) -> None:
         """Fit LightGBM directly with categorical pandas columns."""
